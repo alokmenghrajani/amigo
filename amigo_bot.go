@@ -222,7 +222,7 @@ func doStart(config Config, db *sql.DB, ws *websocket.Conn, userToken string, ch
 
 	// Return link
 	m.Type = "message"
-	m.Text = "Here is a link to the puzzle: TODO"
+	m.Text = fmt.Sprintf("Here is a link to the puzzle: %s", config.PuzzleLink)
 	if isPrivate(channel) {
 		m.Channel = channel
 	} else {
