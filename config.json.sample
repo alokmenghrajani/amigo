@@ -1,0 +1,9 @@
+{
+  "bot_name": "amigo_bot",
+  "slack_api_token": "xoxb-XXXXXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXX",
+  "mysql_conn_string": "root@/amigo_bot?charset=utf8",
+  "puzzle_link": "http://localhost/puzzle_1.pdf",
+  "public_channel": "ctf-test",
+  "flag1": "abcdefgh",
+  "flag2": "12345678"
+}

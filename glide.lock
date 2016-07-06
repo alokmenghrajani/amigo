@@ -1,0 +1,12 @@
+hash: a6ad33eadbf3a5cdca6cf446f4dce4779152bd4028e14e6a24e5c716d07aa35d
+updated: 2016-07-05T23:44:33.939965953-07:00
+imports:
+- name: github.com/go-sql-driver/mysql
+  version: 3654d25ec346ee8ce71a68431025458d52a38ac0
+- name: github.com/nlopes/slack
+  version: 4feee83bb2b31d790977ce727a028c6a542c72c7
+- name: golang.org/x/net
+  version: d7bf3545bb0dacf009c535b3d3fbf53ac0a339ab
+  subpackages:
+  - websocket
+devImports: []
