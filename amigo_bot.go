@@ -55,6 +55,34 @@ func resolveUser(config Config, userToken string) (user, error) {
 	return newUser, nil
 }
 
+func resolveChannel(config Config) string {
+	log.Printf("resolving channel: %s", config.PublicChannel)
+	api := slack.New(config.SlackApiToken)
+	groups, err := api.GetGroups(true)
+	if err != nil {
+		log.Printf("api.GetGroups: %s", err)
+	} else {
+		for _, group := range groups {
+			if group.Name == config.PublicChannel {
+				return group.ID
+			}
+		}
+	}
+
+	channels, err := api.GetChannels(true)
+	if err != nil {
+		log.Printf("api.GetChannels: %s", err)
+	} else {
+		for _, channel := range channels {
+			if channel.Name == config.PublicChannel {
+				return channel.ID
+			}
+		}
+	}
+
+	return ""
+}
+
 func isPrivate(channel string) bool {
 	return strings.HasPrefix(channel, "D")
 }
@@ -71,6 +99,8 @@ func postError(ws *websocket.Conn, channel string, message string, userToken str
 	log.Printf("error: %s", message)
 	postMessage(ws, m)
 }
+
+var publicChannel string
 
 func main() {
 	userCache = make(map[string]user)
@@ -89,6 +119,8 @@ func main() {
 	// Connect to Slack using Websocket Real Time API
 	ws, bot_id := slackConnect(config.SlackApiToken)
 	fmt.Print("[OK] Slack\n")
+
+	publicChannel = resolveChannel(config)
 
 	for {
 		// read each incoming message
@@ -182,11 +214,15 @@ func doStart(config Config, db *sql.DB, ws *websocket.Conn, userToken string, ch
 	}
 
 	// Post to public channel
-
-	// Return link
 	var m Message
 	m.Type = "message"
-	m.Text = "link to puzzle: "
+	m.Channel = publicChannel
+	m.Text = fmt.Sprintf("Team %s has entered the competition!", teamName)
+	postMessage(ws, m)
+
+	// Return link
+	m.Type = "message"
+	m.Text = "Here is a link to the puzzle: TODO"
 	if isPrivate(channel) {
 		m.Channel = channel
 	} else {
@@ -206,8 +242,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 
 	// Check user exists in users table
 	log.Printf("doValidate: %s for %s", u.username, flag)
-	var team int
-	err = db.QueryRow("SELECT team FROM users WHERE user=?", u.username).Scan(&team)
+	var team string
+	err = db.QueryRow("SELECT name FROM teams JOIN users ON teams.id = users.team WHERE users.user=?", u.username).Scan(&team)
 	switch {
 	case err == sql.ErrNoRows:
 		postError(ws, channel, "sorry, I don't know which team you are on.", userToken)
@@ -218,11 +254,20 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	default:
 	}
 
-	event := "incorrect flag"
+	// Disallow validation on public channel
+	if channel == publicChannel {
+		postError(ws, channel, fmt.Sprintf("shush!"), userToken)
+		return
+	}
+
+	event := "incorrect"
+	event_ok := false
 	if flag == config.Flag1 {
-		event = "got flag 1"
+		event = "flag 1"
+		event_ok = true
 	} else if flag == config.Flag2 {
-		event = "got flag 2"
+		event = "flag 2"
+		event_ok = true
 	}
 
 	// Record log event
@@ -233,17 +278,21 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	}
 
 	// Post to public channel
-	// TODO
-
-	// Return link
 	var m Message
 	m.Type = "message"
-	m.Text = event
-	if isPrivate(channel) {
-		m.Channel = channel
-	} else {
-		m.Channel = u.privateChannel
+	if (event_ok) {
+			m.Channel = publicChannel
+			m.Text = fmt.Sprintf("Team %s found %s!", team, event)
+			postMessage(ws, m)
 	}
+
+	// Return result
+	if (event_ok) {
+		m.Text = fmt.Sprintf("Congrats, you found %s!", event)
+	} else {
+		m.Text = fmt.Sprintf("Sorry, that's not right.")
+	}
+	m.Channel = channel
 	postMessage(ws, m)
 	log.Printf("doValidate: done (%s)", u.username)
 }
