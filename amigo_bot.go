@@ -11,18 +11,18 @@
 package main
 
 import (
-	_ "github.com/go-sql-driver/mysql"
 	"database/sql"
 	"fmt"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/nlopes/slack"
+	"golang.org/x/net/websocket"
 	"log"
 	"strings"
-	"golang.org/x/net/websocket"
 	"sync"
-	"github.com/nlopes/slack"
 )
 
 type user struct {
-	username string
+	username       string
 	privateChannel string
 }
 
@@ -41,10 +41,10 @@ func resolveUser(config Config, userToken string) (user, error) {
 	log.Printf("resolving user: %s", userToken)
 	api := slack.New(config.SlackApiToken)
 	userInfo, err := api.GetUserInfo(userToken)
-  if err != nil {
+	if err != nil {
 		log.Printf("api.GetUserInfo: %s", err)
-    return user{}, err
-  }
+		return user{}, err
+	}
 	_, _, imChannel, err := api.OpenIMChannel(userToken)
 	if err != nil {
 		log.Printf("api.OpenIMChannel: %s", err)
@@ -136,7 +136,7 @@ func main() {
 					parts := strings.Fields(m.Text)
 					if len(parts) >= 2 && parts[1] == "help" {
 						go func(m Message) {
-						  doHelp(config, ws, m.User, m.Channel)
+							doHelp(config, ws, m.User, m.Channel)
 						}(m)
 					} else if len(parts) >= 3 && parts[1] == "start" {
 						go func(m Message) {
@@ -145,6 +145,10 @@ func main() {
 					} else if len(parts) >= 3 && parts[1] == "validate" {
 						go func(m Message) {
 							doValidate(config, db, ws, m.User, m.Channel, strings.Join(parts[2:], " "))
+						}(m)
+					} else if len(parts) >= 2 && parts[1] == "scores" {
+						go func(m Message) {
+							doTopScores(config, db, ws, m.User, m.Channel)
 						}(m)
 					} else {
 						go func(m Message) {
@@ -155,7 +159,7 @@ func main() {
 					parts := strings.Fields(m.Text)
 					if len(parts) >= 1 && parts[0] == "help" {
 						go func(m Message) {
-						  doHelp(config, ws, m.User, m.Channel)
+							doHelp(config, ws, m.User, m.Channel)
 						}(m)
 					} else if len(parts) >= 2 && parts[0] == "start" {
 						go func(m Message) {
@@ -164,6 +168,10 @@ func main() {
 					} else if len(parts) >= 2 && parts[0] == "validate" {
 						go func(m Message) {
 							doValidate(config, db, ws, m.User, m.Channel, strings.Join(parts[1:], " "))
+						}(m)
+					} else if len(parts) >= 1 && parts[0] == "scores" {
+						go func(m Message) {
+							doTopScores(config, db, ws, m.User, m.Channel)
 						}(m)
 					} else {
 						go func(m Message) {
@@ -280,14 +288,14 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	// Post to public channel
 	var m Message
 	m.Type = "message"
-	if (event_ok) {
-			m.Channel = publicChannel
-			m.Text = fmt.Sprintf("Team %s found %s!", team, event)
-			postMessage(ws, m)
+	if event_ok {
+		m.Channel = publicChannel
+		m.Text = fmt.Sprintf("Team %s found %s!", team, event)
+		postMessage(ws, m)
 	}
 
 	// Return result
-	if (event_ok) {
+	if event_ok {
 		m.Text = fmt.Sprintf("Congrats, you found %s!", event)
 	} else {
 		m.Text = fmt.Sprintf("Sorry, that's not right.")
@@ -295,4 +303,38 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	m.Channel = channel
 	postMessage(ws, m)
 	log.Printf("doValidate: done (%s)", u.username)
+}
+
+func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
+	rows, err := db.Query("select name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by flag2_time, flag1_time")
+	if err != nil {
+		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+		return
+	}
+	defer rows.Close()
+
+	i := 0
+	text = ""
+	for rows.Next() {
+		var name string
+		var flag1Time, flag2Time int
+		err := rows.Scan(&name, &flag1Time, &flag2Time)
+		if err != nil {
+			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+			return
+		}
+		text += fmt.Sprintf("#%d : Team %s found flag 1 in %d sec, flag 2 in %d sec", i, name, flag1_time, flag2_time)
+		i++
+	}
+
+	if text == "" {
+		text = "It appears nobody has found any flags yet"
+	}
+
+	// Post to public channel
+	var m Message
+	m.Type = "message"
+	m.Text = text
+	m.Channel = channel
+	postMessage(ws, m)
 }
