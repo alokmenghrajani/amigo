@@ -206,9 +206,8 @@ func doStart(config Config, db *sql.DB, ws *websocket.Conn, userToken string, ch
 	default:
 	}
 
-	// Update the team name
-	_, err = db.Exec("INSERT INTO teams SET id=?, name=? ON DUPLICATE KEY UPDATE name=?",
-		team, teamName, teamName)
+	// Update the team name, can only happen once.
+	_, err = db.Exec("INSERT INTO teams SET id=?, name=?", team, teamName)
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
