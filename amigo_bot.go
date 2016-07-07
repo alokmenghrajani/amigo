@@ -305,7 +305,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 }
 
 func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
-	rows, err := db.Query("select name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by flag2_time, flag1_time")
+	rows, err := db.Query("select name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by -flag2_time desc, flag1_time")
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
@@ -313,16 +313,20 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 	defer rows.Close()
 
 	i := 0
-	text = ""
+	text := ""
 	for rows.Next() {
 		var name string
-		var flag1Time, flag2Time int
+		var flag1Time, flag2Time sql.NullInt64
 		err := rows.Scan(&name, &flag1Time, &flag2Time)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 			return
 		}
-		text += fmt.Sprintf("#%d : Team %s found flag 1 in %d sec, flag 2 in %d sec", i, name, flag1_time, flag2_time)
+		if flag2Time.Valid {
+			text += fmt.Sprintf("#%d : Team %s found flag 1 in %d min, flag 2 in %d min\n", i, name, flag1Time.Int64/60, flag2Time.Int64/60)
+		} else {
+			text += fmt.Sprintf("#%d : Team %s found flag 1 in %d min, has not found flag 2\n", i, name, flag1Time.Int64/60)
+		}
 		i++
 	}
 

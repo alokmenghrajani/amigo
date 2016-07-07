@@ -12,7 +12,8 @@ func doHelp(config Config, ws *websocket.Conn, user string, channel string) {
 	m.Channel = channel
 
   m.Text = `start _team name_: sets your team's name and PMs you a link to a puzzle. This starts your clock.
-validate _flag_: tells you if a flag is correct (message or invite me to a private channel first!).`
+validate _flag_: tells you if a flag is correct (message or invite me to a private channel first!).
+scores: tells you the current top scores (beta)`
   log.Printf("posting: %v", m)
 	postMessage(ws, m)
 }
