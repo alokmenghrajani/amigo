@@ -305,7 +305,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 }
 
 func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
-	rows, err := db.Query("select name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by -flag2_time desc, flag1_time")
+	rows, err := db.Query("select id, name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by -flag2_time desc, flag1_time")
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
@@ -314,19 +314,27 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 
 	i := 0
 	text := ""
+	teamsShown := map[int]bool{}
 	for rows.Next() {
+		var id int
 		var name string
 		var flag1Time, flag2Time sql.NullInt64
-		err := rows.Scan(&name, &flag1Time, &flag2Time)
+		err := rows.Scan(&id, &name, &flag1Time, &flag2Time)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 			return
 		}
-		if flag2Time.Valid {
-			text += fmt.Sprintf("#%d : Team %s found flag 1 in %d min, flag 2 in %d min\n", i, name, flag1Time.Int64/60, flag2Time.Int64/60)
-		} else {
-			text += fmt.Sprintf("#%d : Team %s found flag 1 in %d min, has not found flag 2\n", i, name, flag1Time.Int64/60)
+		if _, ok := teamsShown[id]; ok {
+			// Skip team if they have already been output (if teams "find" a flag multiple times,
+			// they'll end up with multiple entries, but we just want to print the fastest time).
+			continue
 		}
+		if flag2Time.Valid {
+			text += fmt.Sprintf("#%d : Team %s completed the challenge in %d min\n", i, name, flag2Time.Int64/60)
+		} else {
+			text += fmt.Sprintf("#%d : Team %s found flag 1 in %d min, has not yet found flag 2\n", i, name, flag1Time.Int64/60)
+		}
+		teamsShown[id] = true
 		i++
 	}
 
