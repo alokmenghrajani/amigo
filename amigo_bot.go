@@ -262,7 +262,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	}
 
 	// Check user exists in users table
-	log.Printf("doValidate: %s solving puzzle %s: %s", u.username, flag)
+	log.Printf("doValidate: %s solving puzzle %s: %s", u.username, sLevel, flag)
 	var team string
 	var teamID int
 	err = db.QueryRow("SELECT teams.name,teams.id FROM teams JOIN users ON teams.id = users.team WHERE users.user=?", u.username).Scan(&team, &teamID)
@@ -282,6 +282,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 		return
 	}
 
+	level := -1
 	level, err = strconv.Atoi(sLevel)
 	switch {
 	case err != nil:
@@ -301,8 +302,9 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM logs WHERE team_id=? AND level=?", teamID, level).Scan(&count)
-	if err == nil {
+	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+		return
 	}
 
 	switch {
@@ -321,6 +323,16 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 			postError(ws, channel, fmt.Sprintf("you've exhausted your 10 tries! no points 4 u"), userToken)
 			return
 		default:
+			var dupCount int
+			err = db.QueryRow("SELECT COUNT(*) FROM logs WHERE team_id=? AND level=? AND event=?", teamID, level, event).Scan(&dupCount)
+			if err != nil {
+				postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+				return
+			}
+			if dupCount > 0 {
+				postError(ws, channel, fmt.Sprintf("you (or a teammate) already tried that guess"), userToken)
+				return
+			}
 			if flag == config.Flag3 {
 				event = "flag 3"
 				eventOk = true
@@ -329,7 +341,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	}
 
 	// Record log event
-	_, err = db.Exec("INSERT INTO logs SET user=?, event=?", u.username, event)
+	_, err = db.Exec("INSERT INTO logs SET user=?, event=?, level=?, team_id=?", u.username, event, level, teamID)
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
@@ -341,6 +353,11 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	if eventOk {
 		m.Channel = publicChannel
 		m.Text = fmt.Sprintf("Team %s found %s!", team, event)
+		postMessage(ws, m)
+	}
+	if level == 2 && (count+1) == 10 && !eventOk {
+		m.Channel = publicChannel
+		m.Text = fmt.Sprintf("Team %s ran out of tries! :(", team)
 		postMessage(ws, m)
 	}
 
@@ -372,9 +389,9 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 	text := ""
 	teamsShown := map[int]bool{}
 	for rows.Next() {
-		var id int
+		var id, flag3Tries int
 		var name string
-		var flag1Time, flag2Time, flag3Time, flag3Tries sql.NullInt64
+		var flag1Time, flag2Time, flag3Time sql.NullInt64
 		err := rows.Scan(&id, &name, &flag1Time, &flag2Time, &flag3Time, &flag3Tries)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
@@ -385,7 +402,7 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 			// they'll end up with multiple entries, but we just want to print the fastest time).
 			continue
 		}
-		text += fmt.Sprintf("#%d : Team %s has found the following flags: ", i, name)
+		text += fmt.Sprintf("#%d : Team %s: ", i, name)
 
 		if flag1Time.Valid {
 			text += fmt.Sprintf("flag 1 (%d min) ", flag1Time.Int64/60)
@@ -394,7 +411,9 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 			text += fmt.Sprintf("flag 2 (%d min) ", flag2Time.Int64/60)
 		}
 		if flag3Time.Valid {
-			text += fmt.Sprintf("flag 3 (%d tries) ", flag3Tries.Int64)
+			text += fmt.Sprintf("flag 3 (%d tries) ", flag3Tries)
+		} else if flag3Tries >= 10 {
+			text += fmt.Sprintf("no flag 3 in 10/10 tries :( ")
 		}
 		text += "\n"
 		teamsShown[id] = true
