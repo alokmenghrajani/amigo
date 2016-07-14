@@ -119,7 +119,7 @@ func main() {
 	fmt.Print("[OK] Database\n")
 
 	// Connect to Slack using Websocket Real Time API
-	ws, bot_id := slackConnect(config.SlackApiToken)
+	ws, botID := slackConnect(config.SlackApiToken)
 	fmt.Print("[OK] Slack\n")
 
 	publicChannel = resolveChannel(config)
@@ -134,7 +134,7 @@ func main() {
 
 		if m.Type == "message" {
 			if m.Subtype == "" {
-				if strings.HasPrefix(m.Text, fmt.Sprintf("<@%s>", bot_id)) {
+				if strings.HasPrefix(m.Text, fmt.Sprintf("<@%s>", botID)) {
 					parts := strings.Fields(m.Text)
 					if len(parts) >= 2 && parts[1] == "help" {
 						go func(m Message) {
@@ -157,7 +157,7 @@ func main() {
 							postError(ws, m.Channel, "sorry, I didn't understand that.", m.User)
 						}(m)
 					}
-				} else if strings.HasPrefix(m.Channel, "D") && m.User != bot_id {
+				} else if strings.HasPrefix(m.Channel, "D") && m.User != botID {
 					parts := strings.Fields(m.Text)
 					if len(parts) >= 1 && parts[0] == "help" {
 						go func(m Message) {
@@ -264,8 +264,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	// Check user exists in users table
 	log.Printf("doValidate: %s solving puzzle %s: %s", u.username, flag)
 	var team string
-	var teamId int
-	err = db.QueryRow("SELECT teams.name,teams.id FROM teams JOIN users ON teams.id = users.team WHERE users.user=?", u.username).Scan(&team, &teamId)
+	var teamID int
+	err = db.QueryRow("SELECT teams.name,teams.id FROM teams JOIN users ON teams.id = users.team WHERE users.user=?", u.username).Scan(&team, &teamID)
 	switch {
 	case err == sql.ErrNoRows:
 		postError(ws, channel, "sorry, I don't know which team you are on.", userToken)
@@ -297,10 +297,10 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	}
 
 	event := "incorrect:" + flag
-	event_ok := false
+	eventOk := false
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM logs WHERE team_id=? AND level=?", teamId, level).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM logs WHERE team_id=? AND level=?", teamID, level).Scan(&count)
 	if err == nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 	}
@@ -309,10 +309,10 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	case level == 1:
 		if flag == config.Flag1 {
 			event = "flag 1"
-			event_ok = true
+			eventOk = true
 		} else if flag == config.Flag2 {
 			event = "flag 2"
-			event_ok = true
+			eventOk = true
 		}
 	case level == 2:
 		// Make sure they haven't done > 10 tries
@@ -323,7 +323,7 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 		default:
 			if flag == config.Flag3 {
 				event = "flag 3"
-				event_ok = true
+				eventOk = true
 			}
 		}
 	}
@@ -338,14 +338,14 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	// Post to public channel
 	var m Message
 	m.Type = "message"
-	if event_ok {
+	if eventOk {
 		m.Channel = publicChannel
 		m.Text = fmt.Sprintf("Team %s found %s!", team, event)
 		postMessage(ws, m)
 	}
 
 	// Return result
-	if event_ok {
+	if eventOk {
 		m.Text = fmt.Sprintf("Congrats, you found %s!", event)
 	} else {
 		m.Text = fmt.Sprintf("Sorry, that's not right.")
