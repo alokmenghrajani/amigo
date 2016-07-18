@@ -503,6 +503,7 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 		defer rows.Close()
 
 		var teamName string
+		rows.Next()
 		err = rows.Scan(&teamName)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
