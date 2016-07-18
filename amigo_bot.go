@@ -14,9 +14,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/nlopes/slack"
@@ -375,53 +377,162 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	log.Printf("doValidate: done (%s)", u.username)
 }
 
+type teamScores struct {
+	teamID                                                     int
+	flag1Score, flag2Score                                     time.Duration
+	flag3Score, flag4Score, flag5Score, flag6Score, flag7Score bool
+}
+
+// ScoreList is things
+type ScoreList []teamScores
+
+func (s ScoreList) Len() int {
+	return len(s)
+}
+
+func (s ScoreList) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s teamScores) numFlags() int {
+	numFlags := 0
+	if int64(s.flag1Score) > 0 {
+		numFlags++
+	}
+	if int64(s.flag2Score) > 0 {
+		numFlags++
+	}
+	if s.flag3Score {
+		numFlags++
+	}
+	if s.flag4Score {
+		numFlags++
+	}
+	if s.flag5Score {
+		numFlags++
+	}
+	if s.flag6Score {
+		numFlags++
+	}
+	if s.flag7Score {
+		numFlags++
+	}
+	return numFlags
+}
+
+func (s ScoreList) Less(i, j int) bool {
+	numFlagsLeft := s[i].numFlags()
+	numFlagsRight := s[j].numFlags()
+	return numFlagsLeft < numFlagsRight
+}
+
 func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
-	// I'm sorry
-	rows, err := db.Query("select distinct teams.id as id, teams.name as team_name, unix_timestamp(t1.ts)-unix_timestamp(t0.ts) as flag1_time, unix_timestamp(t2.ts)-unix_timestamp(t0.ts) as flag2_time, FLOOR(unix_timestamp(t3.ts)/unix_timestamp(t3.ts)) AS flag3_time, (select count(*) from logs as a where a.team_id=teams.id and level=2 and (event like 'incorrect:%' or event like 'flag 3')) AS flag3_tries from logs left join teams on (teams.id=logs.team_id) left join logs as t0 on (t0.team_id=logs.team_id and t0.event='start') left join logs as t1 on (t1.team_id=logs.team_id and t1.event='flag 1') left join logs as t2 on (t2.team_id=logs.team_id and t2.event='flag 2') left join logs as t3 on (t3.team_id=logs.team_id and t3.event='flag 3') order by (flag3_time * -flag3_tries) desc, -flag2_time desc, flag1_time")
-	// rows, err := db.Query("select id, name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by -flag2_time desc, flag1_time")
+	// Fetch data
+	rows, err := db.Query("select * from logs where team_id < 666")
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
 	}
 	defer rows.Close()
 
-	i := 0
-	text := ""
-	teamsShown := map[int]bool{}
+	// Extract data from rows
+	teams := map[int]bool{}
+	eventTimes := map[int]map[string]time.Time{}
+	eventCounts := map[int]map[string]int{}
+
 	for rows.Next() {
-		var id, flag3Tries int
-		var name string
-		var flag1Time, flag2Time, flag3Time sql.NullInt64
-		err := rows.Scan(&id, &name, &flag1Time, &flag2Time, &flag3Time, &flag3Tries)
+		var id, level, teamID int
+		var user, event string
+		var timestamp time.Time
+
+		err := rows.Scan(&id, &user, &event, &timestamp, &teamID, &level)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 			return
 		}
-		if _, ok := teamsShown[id]; ok {
-			// Skip team if they have already been output (if teams "find" a flag multiple times,
-			// they'll end up with multiple entries, but we just want to print the fastest time).
-			continue
-		}
-		text += fmt.Sprintf("#%d : Team %s: ", i, name)
 
-		if flag1Time.Valid {
-			text += fmt.Sprintf("flag 1 (%d min) ", flag1Time.Int64/60)
+		teams[teamID] = true
+
+		eventTimesForTeam, ok := eventTimes[teamID]
+		if !ok {
+			eventTimes[teamID] = map[string]time.Time{}
+			eventTimesForTeam = eventTimes[teamID]
 		}
-		if flag2Time.Valid {
-			text += fmt.Sprintf("flag 2 (%d min) ", flag2Time.Int64/60)
+
+		eventCountsForTeam, ok := eventCounts[teamID]
+		if !ok {
+			eventCounts[teamID] = map[string]int{}
+			eventCountsForTeam = eventCounts[teamID]
 		}
-		if flag3Time.Valid {
-			text += fmt.Sprintf("flag 3 (%d tries) ", flag3Tries)
-		} else if flag3Tries >= 10 {
-			text += fmt.Sprintf("no flag 3 in 10/10 tries :( ")
+
+		switch event {
+		case "start", "flag 1", "flag 2", "flag 3", "flag 4", "flag 5", "flag 6", "flag 7":
+			prevTime, ok := eventTimesForTeam[event]
+			if (ok && timestamp.Before(prevTime)) || !ok {
+				eventTimesForTeam[event] = timestamp
+			}
+			prevCount, ok := eventCountsForTeam[event]
+			if ok {
+				eventCountsForTeam[event] = prevCount + 1
+			} else {
+				eventCountsForTeam[event] = 1
+			}
 		}
-		text += "\n"
-		teamsShown[id] = true
-		i++
 	}
 
-	if text == "" {
-		text = "It appears nobody has found any flags yet"
+	// Flag 1: compute start/end time as score
+	scores := []teamScores{}
+	for team := range teams {
+		startTime, hasStart := eventTimes[team]["start"]
+		flag1Time, hasFlag1 := eventTimes[team]["flag 1"]
+		flag2Time, hasFlag2 := eventTimes[team]["flag 2"]
+		_, hasFlag3 := eventCounts[team]["flag 3"]
+		_, hasFlag4 := eventCounts[team]["flag 4"]
+		_, hasFlag5 := eventCounts[team]["flag 5"]
+		_, hasFlag6 := eventCounts[team]["flag 6"]
+		_, hasFlag7 := eventCounts[team]["flag 7"]
+
+		s := teamScores{}
+		s.teamID = team
+
+		if hasStart && hasFlag1 {
+			s.flag1Score = flag1Time.Sub(startTime)
+		}
+
+		if hasStart && hasFlag2 {
+			s.flag2Score = flag2Time.Sub(startTime)
+		}
+
+		s.flag3Score = hasFlag3
+		s.flag4Score = hasFlag4
+		s.flag5Score = hasFlag5
+		s.flag6Score = hasFlag6
+		s.flag7Score = hasFlag7
+
+		scores = append(scores, s)
+	}
+
+	sort.Sort(ScoreList(scores))
+
+	i := 0
+	text := ""
+	for _, team := range scores {
+		rows, err := db.Query(fmt.Sprintf("select name from teams where id = %d", team.teamID))
+		if err != nil {
+			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+			return
+		}
+		defer rows.Close()
+
+		var teamName string
+		err = rows.Scan(&teamName)
+		if err != nil {
+			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+			return
+		}
+
+		text += fmt.Sprintf("# %d: Team '%s' found %d flags\n", i, teamName, team.numFlags())
+		i++
 	}
 
 	// Post to public channel
