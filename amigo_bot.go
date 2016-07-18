@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/nlopes/slack"
@@ -378,9 +377,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 }
 
 type teamScores struct {
-	teamID                                                     int
-	flag1Score, flag2Score                                     time.Duration
-	flag3Score, flag4Score, flag5Score, flag6Score, flag7Score bool
+	teamID                                                               int
+	hasFlag1, hasFlag2, hasFlag3, hasFlag4, hasFlag5, hasFlag6, hasFlag7 bool
 }
 
 // ScoreList is things
@@ -396,25 +394,25 @@ func (s ScoreList) Swap(i, j int) {
 
 func (s teamScores) numFlags() int {
 	numFlags := 0
-	if int64(s.flag1Score) > 0 {
+	if s.hasFlag1 {
 		numFlags++
 	}
-	if int64(s.flag2Score) > 0 {
+	if s.hasFlag2 {
 		numFlags++
 	}
-	if s.flag3Score {
+	if s.hasFlag3 {
 		numFlags++
 	}
-	if s.flag4Score {
+	if s.hasFlag4 {
 		numFlags++
 	}
-	if s.flag5Score {
+	if s.hasFlag5 {
 		numFlags++
 	}
-	if s.flag6Score {
+	if s.hasFlag6 {
 		numFlags++
 	}
-	if s.flag7Score {
+	if s.hasFlag7 {
 		numFlags++
 	}
 	return numFlags
@@ -428,7 +426,7 @@ func (s ScoreList) Less(i, j int) bool {
 
 func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
 	// Fetch data
-	rows, err := db.Query("select * from logs where team_id < 666")
+	rows, err := db.Query("select id, event, team_id from logs where team_id < 666")
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
@@ -437,27 +435,19 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 
 	// Extract data from rows
 	teams := map[int]bool{}
-	eventTimes := map[int]map[string]time.Time{}
 	eventCounts := map[int]map[string]int{}
 
 	for rows.Next() {
-		var id, level, teamID int
-		var user, event string
-		var timestamp time.Time
+		var id, teamID int
+		var event string
 
-		err := rows.Scan(&id, &user, &event, &timestamp, &teamID, &level)
+		err := rows.Scan(&id, &event, &teamID)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 			return
 		}
 
 		teams[teamID] = true
-
-		eventTimesForTeam, ok := eventTimes[teamID]
-		if !ok {
-			eventTimes[teamID] = map[string]time.Time{}
-			eventTimesForTeam = eventTimes[teamID]
-		}
 
 		eventCountsForTeam, ok := eventCounts[teamID]
 		if !ok {
@@ -467,10 +457,6 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 
 		switch event {
 		case "start", "flag 1", "flag 2", "flag 3", "flag 4", "flag 5", "flag 6", "flag 7":
-			prevTime, ok := eventTimesForTeam[event]
-			if (ok && timestamp.Before(prevTime)) || !ok {
-				eventTimesForTeam[event] = timestamp
-			}
 			prevCount, ok := eventCountsForTeam[event]
 			if ok {
 				eventCountsForTeam[event] = prevCount + 1
@@ -483,9 +469,8 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 	// Flag 1: compute start/end time as score
 	scores := []teamScores{}
 	for team := range teams {
-		startTime, hasStart := eventTimes[team]["start"]
-		flag1Time, hasFlag1 := eventTimes[team]["flag 1"]
-		flag2Time, hasFlag2 := eventTimes[team]["flag 2"]
+		_, hasFlag1 := eventCounts[team]["flag 1"]
+		_, hasFlag2 := eventCounts[team]["flag 2"]
 		_, hasFlag3 := eventCounts[team]["flag 3"]
 		_, hasFlag4 := eventCounts[team]["flag 4"]
 		_, hasFlag5 := eventCounts[team]["flag 5"]
@@ -494,20 +479,13 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 
 		s := teamScores{}
 		s.teamID = team
-
-		if hasStart && hasFlag1 {
-			s.flag1Score = flag1Time.Sub(startTime)
-		}
-
-		if hasStart && hasFlag2 {
-			s.flag2Score = flag2Time.Sub(startTime)
-		}
-
-		s.flag3Score = hasFlag3
-		s.flag4Score = hasFlag4
-		s.flag5Score = hasFlag5
-		s.flag6Score = hasFlag6
-		s.flag7Score = hasFlag7
+		s.hasFlag1 = hasFlag1
+		s.hasFlag2 = hasFlag2
+		s.hasFlag3 = hasFlag3
+		s.hasFlag4 = hasFlag4
+		s.hasFlag5 = hasFlag5
+		s.hasFlag6 = hasFlag6
+		s.hasFlag7 = hasFlag7
 
 		scores = append(scores, s)
 	}
