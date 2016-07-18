@@ -490,7 +490,7 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 		scores = append(scores, s)
 	}
 
-	sort.Sort(ScoreList(scores))
+	sort.Sort(sort.Reverse(ScoreList(scores)))
 
 	i := 0
 	text := ""
