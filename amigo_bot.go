@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -291,8 +292,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	case level < 1:
 		postError(ws, channel, fmt.Sprintf("you give us too much credit for starting puzzle enumeration from 0; humans designed this, not chat bots"), userToken)
 		return
-	case level > 2:
-		postError(ws, channel, fmt.Sprintf("woaaaaah nelly! puzzle 3 hasn't started yet!"), userToken)
+	case level > 3:
+		postError(ws, channel, fmt.Sprintf("woaaaaah nelly! there's no such thing as puzzle 4!"), userToken)
 		return
 	default:
 	}
@@ -338,6 +339,27 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 				eventOk = true
 			}
 		}
+	case level == 3:
+		if flag == config.Flag4 {
+			event = "flag 4"
+			eventOk = true
+		}
+		if flag == config.Flag5 {
+			event = "flag 5"
+			eventOk = true
+		}
+		if flag == config.Flag6 {
+			event = "flag 6"
+			eventOk = true
+		}
+		if flag == config.Flag7 {
+			event = "flag 7"
+			eventOk = true
+		}
+		if flag == config.Flag8 {
+			event = "flag 8"
+			eventOk = true
+		}
 	}
 
 	// Record log event
@@ -375,53 +397,144 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	log.Printf("doValidate: done (%s)", u.username)
 }
 
+type teamScores struct {
+	teamID                                                                         int
+	hasFlag1, hasFlag2, hasFlag3, hasFlag4, hasFlag5, hasFlag6, hasFlag7, hasFlag8 bool
+}
+
+// ScoreList is things
+type ScoreList []teamScores
+
+func (s ScoreList) Len() int {
+	return len(s)
+}
+
+func (s ScoreList) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+func (s teamScores) numFlags() int {
+	numFlags := 0
+	if s.hasFlag1 {
+		numFlags++
+	}
+	if s.hasFlag2 {
+		numFlags++
+	}
+	if s.hasFlag3 {
+		numFlags++
+	}
+	if s.hasFlag4 {
+		numFlags++
+	}
+	if s.hasFlag5 {
+		numFlags++
+	}
+	if s.hasFlag6 {
+		numFlags++
+	}
+	if s.hasFlag7 {
+		numFlags++
+	}
+	return numFlags
+}
+
+func (s ScoreList) Less(i, j int) bool {
+	numFlagsLeft := s[i].numFlags()
+	numFlagsRight := s[j].numFlags()
+	return numFlagsLeft < numFlagsRight
+}
+
 func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string, channel string) {
-	// I'm sorry
-	rows, err := db.Query("select distinct teams.id as id, teams.name as team_name, unix_timestamp(t1.ts)-unix_timestamp(t0.ts) as flag1_time, unix_timestamp(t2.ts)-unix_timestamp(t0.ts) as flag2_time, FLOOR(unix_timestamp(t3.ts)/unix_timestamp(t3.ts)) AS flag3_time, (select count(*) from logs as a where a.team_id=teams.id and level=2 and (event like 'incorrect:%' or event like 'flag 3')) AS flag3_tries from logs left join teams on (teams.id=logs.team_id) left join logs as t0 on (t0.team_id=logs.team_id and t0.event='start') left join logs as t1 on (t1.team_id=logs.team_id and t1.event='flag 1') left join logs as t2 on (t2.team_id=logs.team_id and t2.event='flag 2') left join logs as t3 on (t3.team_id=logs.team_id and t3.event='flag 3') order by (flag3_time * -flag3_tries) desc, -flag2_time desc, flag1_time")
-	// rows, err := db.Query("select id, name, unix_timestamp(flag1)-unix_timestamp(start) as flag1_time, unix_timestamp(flag2)-unix_timestamp(start) as flag2_time from teams_start_flag1_flag2 where id < 666 and flag1 is not null order by -flag2_time desc, flag1_time")
+	// Fetch data
+	rows, err := db.Query("select id, event, team_id from logs where team_id < 666")
 	if err != nil {
 		postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 		return
 	}
 	defer rows.Close()
 
-	i := 0
-	text := ""
-	teamsShown := map[int]bool{}
+	// Extract data from rows
+	teams := map[int]bool{}
+	eventCounts := map[int]map[string]int{}
+
 	for rows.Next() {
-		var id, flag3Tries int
-		var name string
-		var flag1Time, flag2Time, flag3Time sql.NullInt64
-		err := rows.Scan(&id, &name, &flag1Time, &flag2Time, &flag3Time, &flag3Tries)
+		var id, teamID int
+		var event string
+
+		err := rows.Scan(&id, &event, &teamID)
 		if err != nil {
 			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
 			return
 		}
-		if _, ok := teamsShown[id]; ok {
-			// Skip team if they have already been output (if teams "find" a flag multiple times,
-			// they'll end up with multiple entries, but we just want to print the fastest time).
-			continue
-		}
-		text += fmt.Sprintf("#%d : Team %s: ", i, name)
 
-		if flag1Time.Valid {
-			text += fmt.Sprintf("flag 1 (%d min) ", flag1Time.Int64/60)
+		teams[teamID] = true
+
+		eventCountsForTeam, ok := eventCounts[teamID]
+		if !ok {
+			eventCounts[teamID] = map[string]int{}
+			eventCountsForTeam = eventCounts[teamID]
 		}
-		if flag2Time.Valid {
-			text += fmt.Sprintf("flag 2 (%d min) ", flag2Time.Int64/60)
+
+		switch event {
+		case "start", "flag 1", "flag 2", "flag 3", "flag 4", "flag 5", "flag 6", "flag 7":
+			prevCount, ok := eventCountsForTeam[event]
+			if ok {
+				eventCountsForTeam[event] = prevCount + 1
+			} else {
+				eventCountsForTeam[event] = 1
+			}
 		}
-		if flag3Time.Valid {
-			text += fmt.Sprintf("flag 3 (%d tries) ", flag3Tries)
-		} else if flag3Tries >= 10 {
-			text += fmt.Sprintf("no flag 3 in 10/10 tries :( ")
-		}
-		text += "\n"
-		teamsShown[id] = true
-		i++
 	}
 
-	if text == "" {
-		text = "It appears nobody has found any flags yet"
+	// Flag 1: compute start/end time as score
+	scores := []teamScores{}
+	for team := range teams {
+		_, hasFlag1 := eventCounts[team]["flag 1"]
+		_, hasFlag2 := eventCounts[team]["flag 2"]
+		_, hasFlag3 := eventCounts[team]["flag 3"]
+		_, hasFlag4 := eventCounts[team]["flag 4"]
+		_, hasFlag5 := eventCounts[team]["flag 5"]
+		_, hasFlag6 := eventCounts[team]["flag 6"]
+		_, hasFlag7 := eventCounts[team]["flag 7"]
+		_, hasFlag8 := eventCounts[team]["flag 8"]
+
+		s := teamScores{}
+		s.teamID = team
+		s.hasFlag1 = hasFlag1
+		s.hasFlag2 = hasFlag2
+		s.hasFlag3 = hasFlag3
+		s.hasFlag4 = hasFlag4
+		s.hasFlag5 = hasFlag5
+		s.hasFlag6 = hasFlag6
+		s.hasFlag7 = hasFlag7
+		s.hasFlag8 = hasFlag8
+
+		scores = append(scores, s)
+	}
+
+	sort.Sort(sort.Reverse(ScoreList(scores)))
+
+	i := 0
+	text := ""
+	for _, team := range scores {
+		rows, err := db.Query(fmt.Sprintf("select name from teams where id = %d", team.teamID))
+		if err != nil {
+			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+			return
+		}
+		defer rows.Close()
+
+		var teamName string
+		rows.Next()
+		err = rows.Scan(&teamName)
+		if err != nil {
+			postError(ws, channel, fmt.Sprintf("sorry, something went wrong (%s)", err), userToken)
+			return
+		}
+
+		text += fmt.Sprintf("# %d: Team '%s' found %d flags\n", i, teamName, team.numFlags())
+		i++
 	}
 
 	// Post to public channel
