@@ -292,8 +292,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 	case level < 1:
 		postError(ws, channel, fmt.Sprintf("you give us too much credit for starting puzzle enumeration from 0; humans designed this, not chat bots"), userToken)
 		return
-	case level > 2:
-		postError(ws, channel, fmt.Sprintf("woaaaaah nelly! puzzle 3 hasn't started yet!"), userToken)
+	case level > 3:
+		postError(ws, channel, fmt.Sprintf("woaaaaah nelly! there's no such thing as puzzle 4!"), userToken)
 		return
 	default:
 	}
@@ -339,6 +339,27 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 				eventOk = true
 			}
 		}
+	case level == 3:
+		if flag == config.Flag4 {
+			event = "flag 4"
+			eventOk = true
+		}
+		if flag == config.Flag5 {
+			event = "flag 5"
+			eventOk = true
+		}
+		if flag == config.Flag6 {
+			event = "flag 6"
+			eventOk = true
+		}
+		if flag == config.Flag7 {
+			event = "flag 7"
+			eventOk = true
+		}
+		if flag == config.Flag8 {
+			event = "flag 8"
+			eventOk = true
+		}
 	}
 
 	// Record log event
@@ -377,8 +398,8 @@ func doValidate(config Config, db *sql.DB, ws *websocket.Conn, userToken string,
 }
 
 type teamScores struct {
-	teamID                                                               int
-	hasFlag1, hasFlag2, hasFlag3, hasFlag4, hasFlag5, hasFlag6, hasFlag7 bool
+	teamID                                                                         int
+	hasFlag1, hasFlag2, hasFlag3, hasFlag4, hasFlag5, hasFlag6, hasFlag7, hasFlag8 bool
 }
 
 // ScoreList is things
@@ -476,6 +497,7 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 		_, hasFlag5 := eventCounts[team]["flag 5"]
 		_, hasFlag6 := eventCounts[team]["flag 6"]
 		_, hasFlag7 := eventCounts[team]["flag 7"]
+		_, hasFlag8 := eventCounts[team]["flag 8"]
 
 		s := teamScores{}
 		s.teamID = team
@@ -486,6 +508,7 @@ func doTopScores(config Config, db *sql.DB, ws *websocket.Conn, userToken string
 		s.hasFlag5 = hasFlag5
 		s.hasFlag6 = hasFlag6
 		s.hasFlag7 = hasFlag7
+		s.hasFlag8 = hasFlag8
 
 		scores = append(scores, s)
 	}

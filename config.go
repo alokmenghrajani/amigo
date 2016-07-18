@@ -15,6 +15,11 @@ type Config struct {
 	Flag1         string `json:"flag1"`
 	Flag2         string `json:"flag2"`
 	Flag3         string `json:"flag3"`
+	Flag4         string `json:"flag4"`
+	Flag5         string `json:"flag5"`
+	Flag6         string `json:"flag6"`
+	Flag7         string `json:"flag7"`
+	Flag8         string `json:"flag8"`
 }
 
 func configRead() Config {
