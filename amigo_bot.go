@@ -436,6 +436,9 @@ func (s teamScores) numFlags() int {
 	if s.hasFlag7 {
 		numFlags++
 	}
+	if s.hasFlag8 {
+		numFlags++
+	}
 	return numFlags
 }
 
